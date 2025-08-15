@@ -84,19 +84,36 @@ class OKXDataCollector:
             logger.error(f"WebSocket connection failed for {self.symbol}", error=str(e))
             raise
     
+    def _convert_timeframe_to_okx_format(self, timeframe: str) -> str:
+        """타임프레임을 OKX API 형식으로 변환"""
+        # OKX API에서 사용하는 정확한 타임프레임 형식
+        mapping = {
+            "1m": "1m",
+            "5m": "5m", 
+            "15m": "15m",
+            "1h": "1H",    # OKX는 시간에 대문자 H 사용
+            "4h": "4H",    # OKX는 시간에 대문자 H 사용  
+            "1d": "1D"     # OKX는 일에 대문자 D 사용
+        }
+        return mapping.get(timeframe, timeframe)
+    
     async def subscribe_channels(self, timeframes: List[str] = None):
         """채널 구독"""
         if not self.websocket or not self.is_connected:
             raise Exception("WebSocket not connected")
         
         if timeframes is None:
-            timeframes = ["1m", "5m", "1H"]  # 기본 시간프레임
+            # 설정에서 기본 타임프레임 가져오기
+            default_timeframes = self.settings.DEFAULT_TIMEFRAMES.split(",")
+            timeframes = [tf.strip() for tf in default_timeframes]  # ["5m", "15m", "1h", "4h", "1d"]
         
         try:
             # 구독 메시지 생성
             subscription_args = []
             for timeframe in timeframes:
-                channel = f"candle{timeframe}"
+                # OKX 형식으로 변환
+                okx_timeframe = self._convert_timeframe_to_okx_format(timeframe)
+                channel = f"candle{okx_timeframe}"
                 subscription_args.append({
                     "channel": channel,
                     "instId": self.symbol
@@ -110,7 +127,8 @@ class OKXDataCollector:
             # 구독 메시지 전송
             await self.websocket.send(json.dumps(subscribe_msg))
             
-            self.subscribed_channels = [f"candle{tf}" for tf in timeframes]
+            # OKX 형식으로 변환된 채널명으로 저장
+            self.subscribed_channels = [f"candle{self._convert_timeframe_to_okx_format(tf)}" for tf in timeframes]
             
             logger.info(
                 f"Subscribed to channels for {self.symbol}",
@@ -160,6 +178,45 @@ class OKXDataCollector:
                     logger.warning(f"Invalid candle data format for {self.symbol}", data=candle_data)
                     continue
                 
+                # confirm 필드 확인 - 확정된 캔들("1")만 처리
+                confirm_status = candle_data[8]
+                if confirm_status != "1":
+                    logger.debug(
+                        f"Skipping unconfirmed candle for {self.symbol}",
+                        timeframe=channel_info.get('channel', '').replace('candle', ''),
+                        timestamp=candle_data[0],
+                        confirm=confirm_status
+                    )
+                    continue
+                
+                # 데이터 검증
+                volume = float(candle_data[5])
+                close_price = float(candle_data[4])
+                
+                # Volume이 0이거나 음수인 경우 경고 로그 및 스킵
+                if volume <= 0:
+                    logger.warning(
+                        f"Invalid volume data for {self.symbol}",
+                        timeframe=channel_info.get('channel', '').replace('candle', ''),
+                        timestamp=candle_data[0],
+                        volume=volume,
+                        close=close_price,
+                        confirm=confirm_status
+                    )
+                    continue
+                
+                # Price가 0이거나 음수인 경우 경고 로그 및 스킵
+                if close_price <= 0:
+                    logger.warning(
+                        f"Invalid price data for {self.symbol}",
+                        timeframe=channel_info.get('channel', '').replace('candle', ''),
+                        timestamp=candle_data[0],
+                        close=close_price,
+                        volume=volume,
+                        confirm=confirm_status
+                    )
+                    continue
+                
                 processed_data = {
                     "symbol": self.symbol,
                     "timeframe": channel_info.get('channel', '').replace('candle', ''),
@@ -167,10 +224,10 @@ class OKXDataCollector:
                     "open": float(candle_data[1]),
                     "high": float(candle_data[2]),
                     "low": float(candle_data[3]),
-                    "close": float(candle_data[4]),
-                    "volume": float(candle_data[5]),
+                    "close": close_price,
+                    "volume": volume,
                     "volume_currency": float(candle_data[6]),
-                    "confirm": candle_data[8] == "1",
+                    "confirm": True,  # 이미 확정된 캔들만 처리하므로 항상 True
                     "received_at": datetime.utcnow().isoformat(),
                     "source": "okx_websocket"
                 }
@@ -184,10 +241,11 @@ class OKXDataCollector:
                 self.message_count += 1
                 
                 logger.debug(
-                    f"Processed candle data for {self.symbol}",
+                    f"Processed confirmed candle data for {self.symbol}",
                     timeframe=processed_data['timeframe'],
                     close=processed_data['close'],
-                    confirm=processed_data['confirm']
+                    volume=processed_data['volume'],
+                    timestamp=processed_data['timestamp']
                 )
                 
         except Exception as e:

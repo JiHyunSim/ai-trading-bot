@@ -12,6 +12,11 @@ import sys
 from datetime import datetime
 
 import structlog
+from dotenv import load_dotenv
+
+# 환경 변수 로드
+load_dotenv()
+
 from app.core.config import get_settings
 from app.websocket.okx_client import OKXDataCollector
 
@@ -203,11 +208,18 @@ async def main():
     for signum in [signal.SIGTERM, signal.SIGINT]:
         signal.signal(signum, lambda s, f: asyncio.create_task(signal_handler(s, f)))
     
-    # 환경변수에서 초기 심볼 설정 확인
-    initial_symbol = os.getenv('SYMBOL')
-    if initial_symbol:
-        logger.info(f"Starting with initial symbol: {initial_symbol}")
+    # 자동 시작 설정 확인
+    if settings.AUTO_START:
+        # 기본 심볼로 BTC-USDT 무기한 선물 자동 시작
+        initial_symbol = settings.DEFAULT_SYMBOL
+        logger.info(f"Auto-starting collection for {initial_symbol} with timeframes: {settings.DEFAULT_TIMEFRAMES}")
         await create_collector_for_symbol(initial_symbol)
+    
+    # 환경변수에서 추가 심볼 설정 확인 (하위 호환성)
+    additional_symbol = os.getenv('SYMBOL') or settings.SYMBOL
+    if additional_symbol and additional_symbol != settings.DEFAULT_SYMBOL:
+        logger.info(f"Starting additional symbol: {additional_symbol}")
+        await create_collector_for_symbol(additional_symbol)
     
     # 백그라운드 태스크 시작
     tasks = [

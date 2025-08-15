@@ -10,6 +10,11 @@ import sys
 from datetime import datetime
 
 import structlog
+from dotenv import load_dotenv
+
+# 환경 변수 로드
+load_dotenv()
+
 from app.core.config import get_settings
 from app.processors.batch_processor import BatchProcessor
 

@@ -182,7 +182,9 @@ class BatchProcessor:
                 if not message:
                     continue
                 
-                batch.append(json.loads(message[1]))
+                # brpop returns (queue_name, value) tuple
+                queue_name, message_data = message
+                batch.append(json.loads(message_data))
                 
                 # 배치 크기만큼 추가 메시지 수집
                 for _ in range(self.settings.BATCH_SIZE - 1):
@@ -226,11 +228,21 @@ class BatchProcessor:
                                 )
                                 if not symbol_id:
                                     # 심볼이 없으면 생성
-                                    base, quote = symbol.split('-')
+                                    symbol_parts = symbol.split('-')
+                                    if len(symbol_parts) >= 2:
+                                        base = symbol_parts[0]
+                                        quote = symbol_parts[1]
+                                        # SWAP 등 추가 정보는 instrument_type으로 처리
+                                        instrument_type = 'SWAP' if 'SWAP' in symbol else 'SPOT'
+                                    else:
+                                        base = symbol
+                                        quote = 'USDT'  # 기본값
+                                        instrument_type = 'SPOT'
+                                    
                                     symbol_id = await conn.fetchval(
-                                        "INSERT INTO symbols (symbol, base_currency, quote_currency) "
-                                        "VALUES ($1, $2, $3) RETURNING id",
-                                        symbol, base, quote
+                                        "INSERT INTO symbols (symbol, base_currency, quote_currency, instrument_type) "
+                                        "VALUES ($1, $2, $3, $4) RETURNING id",
+                                        symbol, base, quote, instrument_type
                                     )
                                 symbol_cache[symbol] = symbol_id
                             
@@ -250,17 +262,14 @@ class BatchProcessor:
                                 timeframe_cache[timeframe] = tf_id
                             
                             insert_data.append((
-                                symbol_cache[symbol],
-                                timeframe_cache[timeframe],
-                                datetime.fromtimestamp(item['timestamp'] / 1000),
+                                symbol,  # symbol 문자열 직접 사용
+                                timeframe,  # timeframe 문자열 직접 사용
+                                item['timestamp'],  # timestamp_ms로 삽입
                                 float(item['open']),
                                 float(item['high']),
                                 float(item['low']),
                                 float(item['close']),
-                                float(item['volume']),
-                                float(item.get('volume_currency', 0)),
-                                item.get('confirm', False),
-                                json.dumps(item)
+                                float(item['volume'])
                             ))
                             
                         except Exception as e:
@@ -270,21 +279,21 @@ class BatchProcessor:
                     if insert_data:
                         # 배치 삽입 (테이블이 존재하지 않을 수 있으므로 try-catch)
                         try:
+                            # 중복 방지를 위한 ON CONFLICT 처리
                             await conn.executemany(
                                 """
-                                INSERT INTO candlestick_data 
-                                (symbol_id, timeframe_id, timestamp, open_price, high_price, 
-                                 low_price, close_price, volume, volume_currency, confirm, raw_data)
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                                ON CONFLICT (symbol_id, timeframe_id, timestamp) DO UPDATE SET
+                                INSERT INTO trading.candlesticks 
+                                (symbol, timeframe, timestamp_ms, open_price, high_price, 
+                                 low_price, close_price, volume)
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                                ON CONFLICT (symbol, timeframe, timestamp_ms) 
+                                DO UPDATE SET
                                     open_price = EXCLUDED.open_price,
                                     high_price = EXCLUDED.high_price,
                                     low_price = EXCLUDED.low_price,
                                     close_price = EXCLUDED.close_price,
                                     volume = EXCLUDED.volume,
-                                    volume_currency = EXCLUDED.volume_currency,
-                                    confirm = EXCLUDED.confirm,
-                                    raw_data = EXCLUDED.raw_data
+                                    created_at = CURRENT_TIMESTAMP
                                 """,
                                 insert_data
                             )

@@ -6,6 +6,7 @@ OKX Trading Gateway Service
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional
@@ -15,6 +16,10 @@ import structlog
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from prometheus_client import Counter, Histogram, generate_latest
+from dotenv import load_dotenv
+
+# 환경 변수 로드
+load_dotenv()
 
 from app.core.config import get_settings
 from app.core.redis_client import get_redis_client
@@ -38,9 +43,16 @@ structlog.configure(
 
 logger = structlog.get_logger(__name__)
 
-# Prometheus 메트릭
-REQUESTS_TOTAL = Counter('gateway_requests_total', 'Total requests', ['method', 'endpoint'])
-REQUEST_DURATION = Histogram('gateway_request_duration_seconds', 'Request duration')
+# Prometheus 메트릭 (중복 등록 방지)
+try:
+    REQUESTS_TOTAL = Counter('gateway_requests_total', 'Total requests', ['method', 'endpoint'])
+    REQUEST_DURATION = Histogram('gateway_request_duration_seconds', 'Request duration')
+except ValueError as e:
+    # 메트릭이 이미 등록된 경우 무시
+    logger.warning(f"Prometheus metrics already registered: {e}")
+    from prometheus_client import REGISTRY
+    REQUESTS_TOTAL = None
+    REQUEST_DURATION = None
 
 
 class SubscriptionRequest(BaseModel):
@@ -121,14 +133,16 @@ async def logging_middleware(request, call_next):
     )
     
     # 메트릭 업데이트
-    REQUESTS_TOTAL.labels(method=request.method, endpoint=request.url.path).inc()
+    if REQUESTS_TOTAL:
+        REQUESTS_TOTAL.labels(method=request.method, endpoint=request.url.path).inc()
     
     try:
         response = await call_next(request)
         
         # 응답 시간 계산
         process_time = asyncio.get_event_loop().time() - start_time
-        REQUEST_DURATION.observe(process_time)
+        if REQUEST_DURATION:
+            REQUEST_DURATION.observe(process_time)
         
         logger.info(
             "Request completed",
