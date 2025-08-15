@@ -1,0 +1,115 @@
+# CI/CD 환경용 Docker Compose 설정
+version: '3.8'
+
+services:
+  # PostgreSQL 테스트 데이터베이스
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: postgres-test
+    environment:
+      POSTGRES_DB: test_trading_db
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d/:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d test_trading_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Redis 테스트 메시지 큐
+  redis-test:
+    image: redis:7-alpine
+    container_name: redis-test
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Gateway 서비스 테스트
+  gateway-test:
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    container_name: gateway-test
+    environment:
+      - ENV=test
+      - DEBUG=false
+      - REDIS_HOST=redis-test
+      - REDIS_PORT=6379
+      - DB_HOST=postgres-test
+      - DB_PORT=5432
+      - DB_NAME=test_trading_db
+      - DB_USER=test_user
+      - DB_PASSWORD=test_password
+      - OKX_API_KEY=test_key
+      - OKX_SECRET_KEY=test_secret
+      - OKX_PASSPHRASE=test_passphrase
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    command: ["python", "-m", "pytest", "tests/", "-v"]
+
+  # Collector 서비스 테스트
+  collector-test:
+    build:
+      context: ./services/collector
+      dockerfile: Dockerfile
+    container_name: collector-test
+    environment:
+      - ENV=test
+      - DEBUG=false
+      - REDIS_HOST=redis-test
+      - REDIS_PORT=6379
+      - OKX_API_KEY=test_key
+      - OKX_SECRET_KEY=test_secret
+      - OKX_PASSPHRASE=test_passphrase
+      - SYMBOL=BTC-USDT
+    depends_on:
+      redis-test:
+        condition: service_healthy
+    command: ["python", "-m", "pytest", "tests/", "-v"]
+
+  # Processor 서비스 테스트  
+  processor-test:
+    build:
+      context: ./services/processor
+      dockerfile: Dockerfile
+    container_name: processor-test
+    environment:
+      - ENV=test
+      - DEBUG=false
+      - REDIS_HOST=redis-test
+      - REDIS_PORT=6379
+      - DB_HOST=postgres-test
+      - DB_PORT=5432
+      - DB_NAME=test_trading_db
+      - DB_USER=test_user
+      - DB_PASSWORD=test_password
+      - BATCH_SIZE=10
+      - BATCH_TIMEOUT=1
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    command: ["python", "-m", "pytest", "tests/", "-v"]
+
+volumes:
+  postgres_test_data:
+
+networks:
+  default:
+    driver: bridge

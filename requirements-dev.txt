@@ -1,0 +1,40 @@
+# 개발 및 테스트 의존성
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+pytest-xdist==3.3.1
+
+# 코드 품질 도구
+black==23.11.0
+flake8==6.1.0
+isort==5.12.0
+mypy==1.7.1
+pre-commit==3.6.0
+
+# 타입 힌트
+types-redis==4.6.0.11
+types-requests==2.31.0.10
+
+# 문서화
+sphinx==7.2.6
+sphinx-rtd-theme==1.3.0
+
+# 성능 프로파일링
+pytest-benchmark==4.0.0
+memory-profiler==0.61.0
+
+# 보안 검사
+safety==2.3.4
+bandit==1.7.5
+
+# 테스트 커버리지
+coverage==7.3.2
+
+# API 테스트
+httpx==0.25.2
+respx==0.20.2
+
+# 개발 도구
+ipython==8.17.2
+jupyter==1.0.0
