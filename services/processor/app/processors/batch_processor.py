@@ -37,7 +37,9 @@ class BatchProcessor:
             )
             
             # Redis 연결 테스트
-            await self.redis_client.ping()
+            ping_result = await self.redis_client.ping()
+            if not ping_result:
+                raise ConnectionError("Failed to connect to Redis")
             logger.info("Redis connection established")
             
             # PostgreSQL 연결 풀 생성
