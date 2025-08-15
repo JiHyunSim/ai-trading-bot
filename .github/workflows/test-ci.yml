@@ -1,0 +1,202 @@
+name: Test CI Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of test to run'
+        required: true
+        default: 'basic'
+        type: choice
+        options:
+        - basic
+        - full
+        - security
+        - docker
+
+jobs:
+  test-basic:
+    name: Basic Pipeline Test
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_type == 'basic' || github.event.inputs.test_type == 'full'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install basic dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install black flake8 isort
+        echo "✅ Basic dependencies installed"
+    
+    - name: Test basic linting
+      run: |
+        echo "Testing with sample Python file..."
+        echo "print('Hello CI/CD')" > test_sample.py
+        black --check test_sample.py || echo "Black formatting check completed"
+        flake8 test_sample.py || echo "Flake8 check completed"
+        isort --check-only test_sample.py || echo "Isort check completed"
+        echo "✅ Basic linting tests completed"
+
+  test-docker:
+    name: Docker Configuration Test
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_type == 'docker' || github.event.inputs.test_type == 'full'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Test Docker Compose syntax
+      run: |
+        docker-compose -f docker-compose.ci.yml config
+        echo "✅ Docker Compose configuration is valid"
+    
+    - name: Test basic Docker operations
+      run: |
+        # 테스트용 간단한 Dockerfile 생성
+        mkdir -p test-service
+        cat > test-service/Dockerfile << 'EOF'
+        FROM python:3.11-slim
+        WORKDIR /app
+        RUN echo "print('Docker test successful')" > test.py
+        CMD ["python", "test.py"]
+        EOF
+        
+        # Docker 빌드 테스트
+        docker build -t test-service ./test-service/
+        docker run --rm test-service
+        echo "✅ Docker build and run test completed"
+
+  test-security:
+    name: Security Configuration Test
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_type == 'security' || github.event.inputs.test_type == 'full'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Test Trivy installation
+      run: |
+        # Trivy 설치 및 테스트
+        sudo apt-get update
+        sudo apt-get install wget apt-transport-https gnupg lsb-release
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+        echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install trivy
+        
+        # 파일 시스템 스캔 테스트
+        trivy fs --exit-code 0 --format table .
+        echo "✅ Security scanning test completed"
+
+  test-environment:
+    name: Environment Configuration Test  
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_type == 'full'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Test database connectivity
+      run: |
+        # PostgreSQL 연결 테스트
+        sudo apt-get update
+        sudo apt-get install postgresql-client
+        
+        PGPASSWORD=test_password psql -h localhost -U test_user -d test_db -c "SELECT version();"
+        echo "✅ PostgreSQL connection test completed"
+    
+    - name: Test Redis connectivity
+      run: |
+        # Redis 연결 테스트
+        sudo apt-get install redis-tools
+        redis-cli -h localhost ping
+        echo "✅ Redis connection test completed"
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [test-basic, test-docker, test-security, test-environment]
+    if: always()
+    
+    steps:
+    - name: Test Results Summary
+      run: |
+        echo "## 🧪 CI/CD Pipeline Test Results"
+        echo ""
+        echo "### Test Status:"
+        
+        if [[ "${{ needs.test-basic.result }}" == "success" ]]; then
+          echo "✅ Basic Pipeline Test: PASSED"
+        elif [[ "${{ needs.test-basic.result }}" == "skipped" ]]; then
+          echo "⏩ Basic Pipeline Test: SKIPPED"
+        else
+          echo "❌ Basic Pipeline Test: FAILED"
+        fi
+        
+        if [[ "${{ needs.test-docker.result }}" == "success" ]]; then
+          echo "✅ Docker Configuration Test: PASSED"
+        elif [[ "${{ needs.test-docker.result }}" == "skipped" ]]; then
+          echo "⏩ Docker Configuration Test: SKIPPED"
+        else
+          echo "❌ Docker Configuration Test: FAILED"
+        fi
+        
+        if [[ "${{ needs.test-security.result }}" == "success" ]]; then
+          echo "✅ Security Configuration Test: PASSED"
+        elif [[ "${{ needs.test-security.result }}" == "skipped" ]]; then
+          echo "⏩ Security Configuration Test: SKIPPED"
+        else
+          echo "❌ Security Configuration Test: FAILED"
+        fi
+        
+        if [[ "${{ needs.test-environment.result }}" == "success" ]]; then
+          echo "✅ Environment Configuration Test: PASSED"
+        elif [[ "${{ needs.test-environment.result }}" == "skipped" ]]; then
+          echo "⏩ Environment Configuration Test: SKIPPED"
+        else
+          echo "❌ Environment Configuration Test: FAILED"
+        fi
+        
+        echo ""
+        echo "### 📋 Next Steps:"
+        echo "1. Check failed tests and fix issues"
+        echo "2. Configure GitHub Secrets as per CI_CD_SETUP_GUIDE.md"
+        echo "3. Create develop branch and test PR workflows"
+        echo "4. Set up actual service implementations"
+        
+        echo ""
+        echo "🎉 CI/CD Pipeline configuration test completed!"
