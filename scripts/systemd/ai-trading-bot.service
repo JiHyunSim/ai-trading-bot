@@ -1,0 +1,36 @@
+[Unit]
+Description=AI Trading Bot - BTC-USDT-SWAP Real-time Data Collection
+Documentation=https://github.com/your-repo/ai-trading-bot
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=forking
+User=simjihyun
+Group=staff
+WorkingDirectory=/Users/simjihyun/claude-projects/ai-trading-bot
+Environment=PATH=/Users/simjihyun/claude-projects/ai-trading-bot/venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/Users/simjihyun/claude-projects/ai-trading-bot
+ExecStart=/Users/simjihyun/claude-projects/ai-trading-bot/scripts/start_daemon.sh
+ExecStop=/Users/simjihyun/claude-projects/ai-trading-bot/scripts/stop_daemon.sh
+ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/Users/simjihyun/claude-projects/ai-trading-bot/pids/gateway.pid
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-trading-bot
+
+# 리소스 제한
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# 보안 설정
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/Users/simjihyun/claude-projects/ai-trading-bot
+
+[Install]
+WantedBy=multi-user.target
