@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # 기존 데이터베이스 서비스 (필요시)
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-trading-bot-postgres
+    environment:
+      POSTGRES_DB: trading_bot
+      POSTGRES_USER: trading_bot
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-trading_bot_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading_bot -d trading_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-bot-network
+
+  # CCXT 데이터 수집기 (일회성 실행)
+  ccxt-backfill:
+    build: .
+    container_name: ai-trading-bot-ccxt-backfill
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=trading_bot
+      - DB_USER=trading_bot
+      - DB_PASSWORD=${DB_PASSWORD:-trading_bot_password}
+      - OKX_API_KEY=${OKX_API_KEY}
+      - OKX_SECRET_KEY=${OKX_SECRET_KEY}
+      - OKX_PASSPHRASE=${OKX_PASSPHRASE}
+      - OKX_SANDBOX=${OKX_SANDBOX:-false}
+    command: python scripts/ccxt_historical_backfill.py BTC/USDT:USDT --days 30
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - trading-bot-network
+
+  # CCXT 일일 유지보수 (배치 실행)
+  ccxt-maintenance:
+    build: .
+    container_name: ai-trading-bot-ccxt-maintenance
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=trading_bot
+      - DB_USER=trading_bot
+      - DB_PASSWORD=${DB_PASSWORD:-trading_bot_password}
+      - OKX_API_KEY=${OKX_API_KEY}
+      - OKX_SECRET_KEY=${OKX_SECRET_KEY}
+      - OKX_PASSPHRASE=${OKX_PASSPHRASE}
+      - OKX_SANDBOX=${OKX_SANDBOX:-false}
+    command: python scripts/ccxt_daily_maintenance.py --hours 25
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - trading-bot-network
+
+  # 크론 배치 서비스 (매일 자동 실행)
+  ccxt-cron:
+    build: .
+    container_name: ai-trading-bot-ccxt-cron
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=trading_bot
+      - DB_USER=trading_bot
+      - DB_PASSWORD=${DB_PASSWORD:-trading_bot_password}
+      - OKX_API_KEY=${OKX_API_KEY}
+      - OKX_SECRET_KEY=${OKX_SECRET_KEY}
+      - OKX_PASSPHRASE=${OKX_PASSPHRASE}
+      - OKX_SANDBOX=${OKX_SANDBOX:-false}
+      - CRON_SCHEDULE=${CRON_SCHEDULE:-0 10 * * *}
+    command: /bin/bash -c "
+      echo 'Installing cron...' &&
+      apt-get update && apt-get install -y cron &&
+      echo '$${CRON_SCHEDULE} cd /app && python scripts/ccxt_daily_maintenance.py --hours 25 >> /var/log/maintenance.log 2>&1' | crontab - &&
+      echo 'Starting cron daemon...' &&
+      touch /var/log/maintenance.log &&
+      cron &&
+      echo 'Cron started. Tailing log...' &&
+      tail -f /var/log/maintenance.log"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - maintenance_logs:/var/log
+    networks:
+      - trading-bot-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  maintenance_logs:
+    driver: local
+
+networks:
+  trading-bot-network:
+    driver: bridge

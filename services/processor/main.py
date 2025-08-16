@@ -41,12 +41,10 @@ logger = structlog.get_logger(__name__)
 shutdown_event = asyncio.Event()
 processor = None
 
-
 async def signal_handler(signum, frame):
     """시그널 핸들러"""
     logger.info(f"Received signal {signum}, initiating shutdown...")
     shutdown_event.set()
-
 
 async def main():
     """메인 함수"""
@@ -88,7 +86,6 @@ async def main():
         if processor:
             await processor.stop()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     try:

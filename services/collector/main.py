@@ -43,12 +43,10 @@ logger = structlog.get_logger(__name__)
 collectors = {}
 shutdown_event = asyncio.Event()
 
-
 async def signal_handler(signum, frame):
     """시그널 핸들러"""
     logger.info(f"Received signal {signum}, initiating shutdown...")
     shutdown_event.set()
-
 
 async def create_collector_for_symbol(symbol: str):
     """심볼별 컬렉터 생성 및 시작"""
@@ -70,7 +68,6 @@ async def create_collector_for_symbol(symbol: str):
         
     except Exception as e:
         logger.error(f"Failed to create collector for {symbol}", error=str(e))
-
 
 async def stop_collector_for_symbol(symbol: str):
     """심볼별 컬렉터 중지"""
@@ -95,7 +92,6 @@ async def stop_collector_for_symbol(symbol: str):
         
     except Exception as e:
         logger.error(f"Failed to stop collector for {symbol}", error=str(e))
-
 
 async def subscription_listener():
     """구독 요청 리스너"""
@@ -148,7 +144,6 @@ async def subscription_listener():
     except Exception as e:
         logger.error("Subscription listener failed", error=str(e))
 
-
 async def health_reporter():
     """헬스 상태 보고"""
     import redis.asyncio as redis
@@ -198,7 +193,6 @@ async def health_reporter():
         
     except Exception as e:
         logger.error("Health reporter failed", error=str(e))
-
 
 async def main():
     """메인 함수"""
@@ -250,7 +244,6 @@ async def main():
                 pass
         
         logger.info("OKX Data Collector Service shutdown complete")
-
 
 if __name__ == "__main__":
     try:
