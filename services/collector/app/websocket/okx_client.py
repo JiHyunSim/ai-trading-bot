@@ -343,8 +343,8 @@ class OKXDataCollector:
                 if self.websocket:
                     try:
                         await self.websocket.close()
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Error closing websocket: {e}")
                     self.websocket = None
                 
                 self.is_connected = False
@@ -377,15 +377,15 @@ class OKXDataCollector:
         if self.websocket:
             try:
                 await self.websocket.close()
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Error closing websocket: {e}")
             self.websocket = None
         
         if self.redis_client:
             try:
                 await self.update_status("stopped")
                 await self.redis_client.close()
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Error during Redis cleanup: {e}")
         
         logger.info(f"Collector stopped for {self.symbol}")

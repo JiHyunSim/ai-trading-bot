@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional
@@ -43,6 +44,9 @@ structlog.configure(
 
 logger = structlog.get_logger(__name__)
 
+# 서비스 시작 시간 기록
+SERVICE_START_TIME = time.time()
+
 # Prometheus 메트릭 (중복 등록 방지)
 try:
     REQUESTS_TOTAL = Counter('gateway_requests_total', 'Total requests', ['method', 'endpoint'])
@@ -54,13 +58,11 @@ except ValueError as e:
     REQUESTS_TOTAL = None
     REQUEST_DURATION = None
 
-
 class SubscriptionRequest(BaseModel):
     """구독 요청 모델"""
     symbols: List[str] = Field(..., description="구독할 심볼 목록", example=["BTC-USDT", "ETH-USDT"])
     timeframes: List[str] = Field(..., description="시간프레임 목록", example=["1m", "5m", "1H"])
     webhook_url: Optional[str] = Field(None, description="웹훅 URL (선택사항)")
-
 
 class SubscriptionResponse(BaseModel):
     """구독 응답 모델"""
@@ -69,7 +71,6 @@ class SubscriptionResponse(BaseModel):
     symbols: List[str]
     subscription_id: Optional[str] = None
     created_at: str
-
 
 class StatusResponse(BaseModel):
     """상태 응답 모델"""
@@ -80,7 +81,6 @@ class StatusResponse(BaseModel):
     statistics: dict
     connection_info: dict
 
-
 class HealthResponse(BaseModel):
     """헬스체크 응답 모델"""
     status: str
@@ -88,7 +88,6 @@ class HealthResponse(BaseModel):
     version: str = "1.0.0"
     uptime_seconds: int
     checks: dict
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -109,7 +108,6 @@ async def lifespan(app: FastAPI):
         await app.redis.close()
     logger.info("Gateway Service shutdown complete")
 
-
 # FastAPI 앱 생성
 app = FastAPI(
     title="OKX Trading Gateway",
@@ -117,7 +115,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
-
 
 @app.middleware("http")
 async def logging_middleware(request, call_next):
@@ -165,7 +162,6 @@ async def logging_middleware(request, call_next):
         )
         raise
 
-
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """헬스체크 엔드포인트"""
@@ -180,7 +176,7 @@ async def health_check():
         return HealthResponse(
             status="healthy" if redis_status == "healthy" else "degraded",
             timestamp=datetime.utcnow().isoformat(),
-            uptime_seconds=0,  # TODO: 실제 업타임 계산
+            uptime_seconds=int(time.time() - SERVICE_START_TIME),
             checks={
                 "redis": redis_status,
                 "message_queue": "healthy",
@@ -191,12 +187,10 @@ async def health_check():
         logger.error("Health check failed", error=str(e))
         raise HTTPException(status_code=503, detail="Service unavailable")
 
-
 @app.get("/metrics")
 async def metrics():
     """Prometheus 메트릭 엔드포인트"""
     return generate_latest().decode('utf-8')
-
 
 @app.post("/api/v1/subscribe", response_model=SubscriptionResponse)
 async def subscribe_to_symbols(request: SubscriptionRequest):
@@ -247,7 +241,6 @@ async def subscribe_to_symbols(request: SubscriptionRequest):
         logger.error("Subscription failed", error=str(e), symbols=request.symbols)
         raise HTTPException(status_code=500, detail=f"Subscription failed: {str(e)}")
 
-
 @app.get("/api/v1/status/{symbol}", response_model=StatusResponse)
 async def get_symbol_status(symbol: str):
     """심볼별 수집 상태 조회"""
@@ -284,7 +277,6 @@ async def get_symbol_status(symbol: str):
     except Exception as e:
         logger.error("Status retrieval failed", symbol=symbol, error=str(e))
         raise HTTPException(status_code=500, detail=f"Status retrieval failed: {str(e)}")
-
 
 @app.delete("/api/v1/subscribe/{symbol}")
 async def unsubscribe_symbol(symbol: str):
@@ -323,7 +315,6 @@ async def unsubscribe_symbol(symbol: str):
         logger.error("Unsubscription failed", symbol=symbol, error=str(e))
         raise HTTPException(status_code=500, detail=f"Unsubscription failed: {str(e)}")
 
-
 @app.get("/api/v1/subscriptions")
 async def get_subscriptions():
     """현재 활성 구독 목록 조회"""
@@ -355,7 +346,6 @@ async def get_subscriptions():
     except Exception as e:
         logger.error("Subscriptions retrieval failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Subscriptions retrieval failed: {str(e)}")
-
 
 if __name__ == "__main__":
     import uvicorn
